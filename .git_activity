@@ -2,3 +2,4 @@
 # Repository Activity Log - DocTranslator
 2026-09-18T14:13:47 | chore: refine error messages for unsupported file formats
 2026-09-24T19:38:18 | refactor: streamline OCR text block normalization
+2026-09-24T22:37:48 | docs: update supported file format list in README
