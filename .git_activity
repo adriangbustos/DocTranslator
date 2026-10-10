@@ -7,3 +7,4 @@
 2026-09-29T15:00:45 | docs: update supported file format list in README
 2026-10-04T11:03:35 | test: add sample test fixtures for dual-column documents
 2026-10-04T15:44:08 | chore: refine error messages for unsupported file formats
+2026-10-10T11:36:18 | chore: refine error messages for unsupported file formats
