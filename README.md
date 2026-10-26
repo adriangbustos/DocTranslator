@@ -56,8 +56,8 @@ run.bat
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/adriangbustos/doc-translator.git
-   cd doc-translator
+   git clone https://github.com/adriangbustos/DocTranslator.git
+   cd DocTranslator
    ```
 
 2. **Create and activate a virtual environment:**
@@ -91,7 +91,7 @@ run.bat
 ## Project Structure
 
 ```
-doc-translator/
+DocTranslator/
 ├── gui.py                  # CustomTkinter Desktop GUI & batch queue manager
 ├── pdf_engine.py           # Typographic vector layout & baseline PDF engine
 ├── office_engine.py        # Word (.docx), PowerPoint (.pptx), Excel (.xlsx) engine
