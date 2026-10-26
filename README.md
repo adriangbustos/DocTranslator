@@ -2,6 +2,10 @@
 
 A high-fidelity, desktop document translation suite powered by **Google Gemini Flash** (`gemini-2.5-flash` / `gemini-3.5-flash-lite`). Engineered for complex forms, official certificates, academic transcripts, tax tables, and office documents with exact typographic baseline preservation, obstacle-aware bounding boxes, and zero layout drift.
 
+![Platform](https://img.shields.io/badge/Platform-Windows-0078D6)
+![Python](https://img.shields.io/badge/Python-3.10+-007ACC)
+![License](https://img.shields.io/badge/License-MIT-74C400)
+
 ---
 
 ## Key Features
