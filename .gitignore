@@ -1,0 +1,78 @@
+# =======================================================
+# SECURITY & SECRETS (NEVER COMMIT)
+# =======================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+secrets.json
+credentials.json
+*_credentials*
+
+# =======================================================
+# VIRTUAL ENVIRONMENTS & DEPENDENCIES
+# =======================================================
+.venv/
+venv/
+ENV/
+env/
+.venv*/
+.installed
+
+# =======================================================
+# PYTHON BYTECODE & CACHE
+# =======================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# =======================================================
+# BUILD & PACKAGING OUTPUTS (PYINSTALLER)
+# =======================================================
+build/
+dist/
+*.spec
+*.egg-info/
+*.egg
+
+# =======================================================
+# AGENT & TEMPORARY SCRATCH WORKSPACE
+# =======================================================
+.agents/
+
+# =======================================================
+# USER DOCUMENTS & TEST ASSETS (DATA LEAK PREVENTION)
+# =======================================================
+*.pdf
+*.docx
+*.pptx
+*.xlsx
+*.csv
+*.tsv
+*.png
+*.jpg
+*.jpeg
+!app_icon.ico
+Testing/Original Documents/
+Testing/Translated Documents/
+Testing/Audit Results/
+
+# =======================================================
+# IDE & OS ARTIFACTS
+# =======================================================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
