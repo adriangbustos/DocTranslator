@@ -1,10 +1,24 @@
-# Document Translator — Universal Layout-Preserving AI Translator
+<div align="center">
+  <img src="assets/icon.png" width="96" height="96" alt="DocTranslator Icon" />
+  <h1>DocTranslator</h1>
+  <p>Universal Layout-Preserving AI Document Translator powered by <b>Google Gemini Flash</b></p>
 
-A high-fidelity, desktop document translation suite powered by **Google Gemini Flash** (`gemini-2.5-flash` / `gemini-3.5-flash-lite`). Engineered for complex forms, official certificates, academic transcripts, tax tables, and office documents with exact typographic baseline preservation, obstacle-aware bounding boxes, and zero layout drift.
+  <p>
+    <img src="https://img.shields.io/badge/Platform-Windows-0078D6" alt="Platform" />
+    <img src="https://img.shields.io/badge/Python-3.10+-007ACC" alt="Python" />
+    <img src="https://img.shields.io/badge/License-MIT-74C400" alt="License" />
+  </p>
+</div>
 
-![Platform](https://img.shields.io/badge/Platform-Windows-0078D6)
-![Python](https://img.shields.io/badge/Python-3.10+-007ACC)
-![License](https://img.shields.io/badge/License-MIT-74C400)
+A high-fidelity, desktop document translation suite engineered for complex forms, official certificates, academic transcripts, tax tables, and office documents with exact typographic baseline preservation, obstacle-aware bounding boxes, and zero layout drift.
+
+---
+
+## Application Preview
+
+<div align="center">
+  <img src="assets/preview.png" alt="DocTranslator Application Preview" width="850" />
+</div>
 
 ---
 

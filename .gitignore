@@ -61,6 +61,7 @@ dist/
 *.jpg
 *.jpeg
 !app_icon.ico
+!assets/**
 Testing/Original Documents/
 Testing/Translated Documents/
 Testing/Audit Results/
