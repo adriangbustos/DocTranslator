@@ -56,182 +56,238 @@ class PDFTranslator:
                 v_lines.append({"x": round(r.x0, 1), "y0": r.y0, "y1": r.y1})
         return v_lines
 
+    def _flatten_signature_widgets(self, page: fitz.Page) -> None:
+        """
+        Detects signature form widgets that render pre-baked appearance (/AP) streams.
+        Preserves graphic emblems/logos at 300 DPI, deletes the widget /AP stream
+        to prevent ghosting/double-printing, and re-inserts the clean logo on the canvas.
+        """
+        widgets = list(page.widgets())
+        if not widgets:
+            return
+
+        page_dict = page.get_text("dict")
+        all_lines = []
+        for b in page_dict.get("blocks", []):
+            if b.get("type") == 0:
+                for l in b.get("lines", []):
+                    all_lines.append(l)
+
+        for w in widgets:
+            w_rect = fitz.Rect(w.rect)
+            if not w_rect.is_valid or w_rect.is_empty:
+                continue
+
+            is_sig = (w.field_type == fitz.PDF_WIDGET_TYPE_SIGNATURE) or (w.field_type_string == "Signature")
+
+            # Find all text lines inside or strongly intersecting the widget
+            w_lines = []
+            for l in all_lines:
+                lr = fitz.Rect(l["bbox"])
+                if w_rect.contains(lr) or (w_rect.intersects(lr) and lr.y0 >= w_rect.y0 - 2.0 and lr.y1 <= w_rect.y1 + 2.0):
+                    w_lines.append(lr)
+
+            if not is_sig and not w_lines:
+                continue
+
+            if w_lines:
+                min_x0 = min(lr.x0 for lr in w_lines)
+                if min_x0 > w_rect.x0 + 15.0:
+                    logo_rect = fitz.Rect(w_rect.x0, w_rect.y0, min_x0 - 2.0, w_rect.y1)
+                    matrix = fitz.Matrix(300 / 72, 300 / 72)
+                    logo_pix = page.get_pixmap(matrix=matrix, clip=logo_rect, alpha=False)
+                    has_graphics = sum(1 for p in logo_pix.samples if p < 240) > 50
+
+                    page.delete_widget(w)
+
+                    if has_graphics:
+                        page.insert_image(logo_rect, pixmap=logo_pix)
+                else:
+                    page.delete_widget(w)
+            else:
+                page.delete_widget(w)
+
     def _extract_page_units(self, page: fitz.Page) -> List[Dict[str, Any]]:
         page_dict = page.get_text("dict")
         page_w = page.rect.width
         page_h = page.rect.height
         units: List[Dict[str, Any]] = []
 
+        all_lines = []
         for b in page_dict.get("blocks", []):
             if b.get("type") != 0:
                 continue
-
-            lines = b.get("lines", [])
-            if not lines:
-                continue
-
-            sorted_lines = sorted(lines, key=lambda l: (round(l["bbox"][1] / 3) * 3, l["bbox"][0]))
-
-            # Group lines into horizontal rows by vertical midpoint
-            rows = []
-            for l in sorted_lines:
-                # Filter out 1pt / tiny screen-reader ghost spans
+            for l in b.get("lines", []):
                 valid_spans = [s for s in l.get("spans", []) if s.get("size", 10.0) >= 3.5 and s.get("text", "").strip()]
-                if not valid_spans:
-                    continue
-                y_mid = (l["bbox"][1] + l["bbox"][3]) / 2.0
-                placed = False
-                for r in rows:
-                    r_y_mid = (r[0]["bbox"][1] + r[0]["bbox"][3]) / 2.0
-                    if abs(y_mid - r_y_mid) <= 4.0:
-                        r.append(l)
-                        placed = True
-                        break
-                if not placed:
-                    rows.append([l])
+                if valid_spans:
+                    all_lines.append(l)
 
-            idx = 0
-            while idx < len(rows):
-                r = rows[idx]
-                if len(r) > 1:
-                    # Multi-column table row: preserve each cell independently
-                    row_sorted = sorted(r, key=lambda x: x["bbox"][0])
-                    for cell_idx, l in enumerate(row_sorted):
-                        spans = [s for s in l.get("spans", []) if s.get("text", "").strip() and s.get("size", 10.0) >= 3.5]
-                        if not spans:
-                            continue
+        if not all_lines:
+            return units
 
-                        # Check if spans have mixed styling
-                        has_mixed = any(
-                            ((s.get("flags", 0) & 16 != 0) != (spans[0].get("flags", 0) & 16 != 0)) or
-                            (s.get("color", 0) != spans[0].get("color", 0))
-                            for s in spans
-                        )
-                        if has_mixed:
-                            for s in spans:
-                                t = s.get("text", "").replace('\u200b', '').strip()
-                                if not t:
-                                    continue
-                                is_b = (s.get("flags", 0) & 16 != 0) or ("bold" in s.get("font", "").lower())
-                                is_it = (s.get("flags", 0) & 2 != 0) or ("italic" in s.get("font", "").lower())
-                                c_int = s.get("color", 0)
-                                units.append({
-                                    "rect": fitz.Rect(s["bbox"]),
-                                    "origin": fitz.Point(s["origin"]),
-                                    "text": t,
-                                    "fontsize": s.get("size", 10.0),
-                                    "is_bold": is_b,
-                                    "is_italic": is_it,
-                                    "color": (((c_int >> 16) & 255) / 255.0, ((c_int >> 8) & 255) / 255.0, (c_int & 255) / 255.0),
-                                    "align": 0,
-                                    "translatable": self._is_translatable(t),
-                                    "row_id": f"row_{idx}_{cell_idx}"
-                                })
-                        else:
-                            full_t = "".join(s.get("text", "") for s in spans).replace('\u200b', '').strip()
-                            if full_t:
-                                s0 = spans[0]
-                                is_b = (s0.get("flags", 0) & 16 != 0) or ("bold" in s0.get("font", "").lower())
-                                is_it = (s0.get("flags", 0) & 2 != 0) or ("italic" in s0.get("font", "").lower())
-                                c_int = s0.get("color", 0)
-                                units.append({
-                                    "rect": fitz.Rect(l["bbox"]),
-                                    "origin": fitz.Point(s0["origin"]),
-                                    "text": full_t,
-                                    "fontsize": s0.get("size", 10.0),
-                                    "is_bold": is_b,
-                                    "is_italic": is_it,
-                                    "color": (((c_int >> 16) & 255) / 255.0, ((c_int >> 8) & 255) / 255.0, (c_int & 255) / 255.0),
-                                    "align": 0,
-                                    "translatable": self._is_translatable(full_t),
-                                    "row_id": f"row_{idx}_{cell_idx}"
-                                })
-                    idx += 1
-                else:
-                    # Single line row
-                    l = r[0]
+        sorted_lines = sorted(all_lines, key=lambda l: (round(((l["bbox"][1] + l["bbox"][3]) / 2.0) / 4) * 4, l["bbox"][0]))
+
+        # Group lines into horizontal rows by vertical midpoint across the entire page
+        rows = []
+        for l in sorted_lines:
+            y_mid = (l["bbox"][1] + l["bbox"][3]) / 2.0
+            placed = False
+            for r in rows:
+                r_y_mid = (r[0]["bbox"][1] + r[0]["bbox"][3]) / 2.0
+                if abs(y_mid - r_y_mid) <= 4.0:
+                    r.append(l)
+                    placed = True
+                    break
+            if not placed:
+                rows.append([l])
+
+        idx = 0
+        while idx < len(rows):
+            r = rows[idx]
+            if len(r) > 1:
+                # Multi-column table row: preserve each cell independently
+                row_sorted = sorted(r, key=lambda x: x["bbox"][0])
+                for cell_idx, l in enumerate(row_sorted):
                     spans = [s for s in l.get("spans", []) if s.get("text", "").strip() and s.get("size", 10.0) >= 3.5]
                     if not spans:
-                        idx += 1
                         continue
 
-                    full_t = "".join(s.get("text", "") for s in spans).replace('\u200b', '').strip()
-                    s0 = spans[0]
-                    is_b = (s0.get("flags", 0) & 16 != 0) or ("bold" in s0.get("font", "").lower())
-                    is_it = (s0.get("flags", 0) & 2 != 0) or ("italic" in s0.get("font", "").lower())
-                    c_int = s0.get("color", 0)
-                    l_rect = fitz.Rect(l["bbox"])
-
-                    # Check for mixed styling within single line
+                    # Check if spans have mixed styling
                     has_mixed = any(
-                        ((s.get("flags", 0) & 16 != 0) != is_b) or
-                        (s.get("color", 0) != c_int)
+                        ((s.get("flags", 0) & 16 != 0) != (spans[0].get("flags", 0) & 16 != 0)) or
+                        (s.get("color", 0) != spans[0].get("color", 0))
                         for s in spans
                     )
-
                     if has_mixed:
-                        for s_i, s in enumerate(spans):
+                        for s in spans:
                             t = s.get("text", "").replace('\u200b', '').strip()
-                            if t:
-                                is_sb = (s.get("flags", 0) & 16 != 0) or ("bold" in s.get("font", "").lower())
-                                is_sit = (s.get("flags", 0) & 2 != 0) or ("italic" in s.get("font", "").lower())
-                                sc_int = s.get("color", 0)
-                                units.append({
-                                    "rect": fitz.Rect(s["bbox"]),
-                                    "origin": fitz.Point(s["origin"]),
-                                    "text": t,
-                                    "fontsize": s.get("size", 10.0),
-                                    "is_bold": is_sb,
-                                    "is_italic": is_sit,
-                                    "color": (((sc_int >> 16) & 255) / 255.0, ((sc_int >> 8) & 255) / 255.0, (sc_int & 255) / 255.0),
-                                    "align": 0,
-                                    "translatable": self._is_translatable(t),
-                                    "line_seq": (idx, s_i, len(spans))
-                                })
-                        idx += 1
-                    else:
-                        is_bullet = full_t.startswith(("-", "•", "*", "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9."))
-                        rect = l_rect
-                        text = full_t
-
-                        # Multi-line continuation: only if next line is NOT a new bullet and has identical styling
-                        next_idx = idx + 1
-                        while next_idx < len(rows) and len(rows[next_idx]) == 1:
-                            nl = rows[next_idx][0]
-                            nspans = [s for s in nl.get("spans", []) if s.get("text", "").strip() and s.get("size", 10.0) >= 3.5]
-                            if not nspans:
-                                next_idx += 1
+                            if not t:
                                 continue
-                            ntxt = "".join(s.get("text", "") for s in nspans).replace('\u200b', '').strip()
-                            n_is_bullet = ntxt.startswith(("-", "•", "*", "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9."))
-                            if n_is_bullet:
-                                break  # NEVER merge separate bullets!
+                            is_b = (s.get("flags", 0) & 16 != 0) or ("bold" in s.get("font", "").lower())
+                            is_it = (s.get("flags", 0) & 2 != 0) or ("italic" in s.get("font", "").lower())
+                            c_int = s.get("color", 0)
+                            units.append({
+                                "rect": fitz.Rect(s["bbox"]),
+                                "origin": fitz.Point(s["origin"]),
+                                "text": t,
+                                "fontsize": s.get("size", 10.0),
+                                "is_bold": is_b,
+                                "is_italic": is_it,
+                                "color": (((c_int >> 16) & 255) / 255.0, ((c_int >> 8) & 255) / 255.0, (c_int & 255) / 255.0),
+                                "align": 0,
+                                "translatable": self._is_translatable(t),
+                                "row_id": f"row_{idx}_{cell_idx}"
+                            })
+                    else:
+                        full_t = "".join(s.get("text", "") for s in spans).replace('\u200b', '').strip()
+                        if full_t:
+                            s0 = spans[0]
+                            is_b = (s0.get("flags", 0) & 16 != 0) or ("bold" in s0.get("font", "").lower())
+                            is_it = (s0.get("flags", 0) & 2 != 0) or ("italic" in s0.get("font", "").lower())
+                            c_int = s0.get("color", 0)
+                            units.append({
+                                "rect": fitz.Rect(l["bbox"]),
+                                "origin": fitz.Point(s0["origin"]),
+                                "text": full_t,
+                                "fontsize": s0.get("size", 10.0),
+                                "is_bold": is_b,
+                                "is_italic": is_it,
+                                "color": (((c_int >> 16) & 255) / 255.0, ((c_int >> 8) & 255) / 255.0, (c_int & 255) / 255.0),
+                                "align": 0,
+                                "translatable": self._is_translatable(full_t),
+                                "row_id": f"row_{idx}_{cell_idx}"
+                            })
+                idx += 1
+            else:
+                # Single line row
+                l = r[0]
+                spans = [s for s in l.get("spans", []) if s.get("text", "").strip() and s.get("size", 10.0) >= 3.5]
+                if not spans:
+                    idx += 1
+                    continue
 
-                            gap = nl["bbox"][1] - rect.y1
-                            ns0 = nspans[0]
-                            n_is_b = (ns0.get("flags", 0) & 16 != 0) or ("bold" in ns0.get("font", "").lower())
-                            if -2.0 <= gap <= s0.get("size", 10.0) * 1.8 and n_is_b == is_b and ns0.get("color", 0) == c_int:
-                                rect = fitz.Rect(min(rect.x0, nl["bbox"][0]), rect.y0, max(rect.x1, nl["bbox"][2]), nl["bbox"][3])
-                                text += " " + ntxt
-                                next_idx += 1
-                            else:
-                                break
+                full_t = "".join(s.get("text", "") for s in spans).replace('\u200b', '').strip()
+                s0 = spans[0]
+                is_b = (s0.get("flags", 0) & 16 != 0) or ("bold" in s0.get("font", "").lower())
+                is_it = (s0.get("flags", 0) & 2 != 0) or ("italic" in s0.get("font", "").lower())
+                c_int = s0.get("color", 0)
+                l_rect = fitz.Rect(l["bbox"])
 
-                        center_x = (rect.x0 + rect.x1) / 2.0
-                        is_centered = (rect.x0 > 80.0) and (page_w - rect.x1 > 80.0) and (abs(center_x - page_w / 2.0) < 25.0)
+                # Check for mixed styling within single line
+                has_mixed = any(
+                    ((s.get("flags", 0) & 16 != 0) != is_b) or
+                    (s.get("color", 0) != c_int)
+                    for s in spans
+                )
 
-                        units.append({
-                            "rect": rect,
-                            "origin": fitz.Point(s0["origin"]),
-                            "text": text,
-                            "fontsize": s0.get("size", 10.0),
-                            "is_bold": is_b,
-                            "is_italic": is_it,
-                            "color": (((c_int >> 16) & 255) / 255.0, ((c_int >> 8) & 255) / 255.0, (c_int & 255) / 255.0),
-                            "align": 1 if is_centered else 0,
-                            "translatable": self._is_translatable(text)
-                        })
-                        idx = next_idx
+                if has_mixed:
+                    for s_i, s in enumerate(spans):
+                        t = s.get("text", "").replace('\u200b', '').strip()
+                        if t:
+                            is_sb = (s.get("flags", 0) & 16 != 0) or ("bold" in s.get("font", "").lower())
+                            is_sit = (s.get("flags", 0) & 2 != 0) or ("italic" in s.get("font", "").lower())
+                            sc_int = s.get("color", 0)
+                            units.append({
+                                "rect": fitz.Rect(s["bbox"]),
+                                "origin": fitz.Point(s["origin"]),
+                                "text": t,
+                                "fontsize": s.get("size", 10.0),
+                                "is_bold": is_sb,
+                                "is_italic": is_sit,
+                                "color": (((sc_int >> 16) & 255) / 255.0, ((sc_int >> 8) & 255) / 255.0, (sc_int & 255) / 255.0),
+                                "align": 0,
+                                "translatable": self._is_translatable(t),
+                                "line_seq": (idx, s_i, len(spans))
+                            })
+                    idx += 1
+                else:
+                    is_bullet = full_t.startswith(("-", "•", "*", "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9."))
+                    rect = l_rect
+                    text = full_t
+
+                    # Multi-line continuation: only if next line is NOT a new bullet, has identical styling, AND aligns horizontally
+                    next_idx = idx + 1
+                    while next_idx < len(rows) and len(rows[next_idx]) == 1:
+                        nl = rows[next_idx][0]
+                        nspans = [s for s in nl.get("spans", []) if s.get("text", "").strip() and s.get("size", 10.0) >= 3.5]
+                        if not nspans:
+                            next_idx += 1
+                            continue
+                        ntxt = "".join(s.get("text", "") for s in nspans).replace('\u200b', '').strip()
+                        n_is_bullet = ntxt.startswith(("-", "•", "*", "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9."))
+                        n_is_field = bool(re.match(r'^[^\s:]{2,25}(?:\s+[^\s:]{1,20}){0,3}:\s', ntxt))
+                        if n_is_bullet or n_is_field:
+                            break  # NEVER merge separate bullets or labeled fields!
+
+                        gap = nl["bbox"][1] - rect.y1
+                        ns0 = nspans[0]
+                        n_is_b = (ns0.get("flags", 0) & 16 != 0) or ("bold" in ns0.get("font", "").lower())
+
+                        # Horizontal alignment: lines must overlap horizontally or share a similar margin
+                        h_overlap = (max(rect.x0, nl["bbox"][0]) < min(rect.x1, nl["bbox"][2])) or (abs(nl["bbox"][0] - rect.x0) <= 25.0)
+
+                        if -2.0 <= gap <= s0.get("size", 10.0) * 1.8 and n_is_b == is_b and ns0.get("color", 0) == c_int and h_overlap:
+                            rect = fitz.Rect(min(rect.x0, nl["bbox"][0]), rect.y0, max(rect.x1, nl["bbox"][2]), nl["bbox"][3])
+                            text += " " + ntxt
+                            next_idx += 1
+                        else:
+                            break
+
+                    center_x = (rect.x0 + rect.x1) / 2.0
+                    is_centered = (rect.x0 > 80.0) and (page_w - rect.x1 > 80.0) and (abs(center_x - page_w / 2.0) < 25.0)
+
+                    units.append({
+                        "rect": rect,
+                        "origin": fitz.Point(s0["origin"]),
+                        "text": text,
+                        "fontsize": s0.get("size", 10.0),
+                        "is_bold": is_b,
+                        "is_italic": is_it,
+                        "color": (((c_int >> 16) & 255) / 255.0, ((c_int >> 8) & 255) / 255.0, (c_int & 255) / 255.0),
+                        "align": 1 if is_centered else 0,
+                        "translatable": self._is_translatable(text)
+                    })
+                    idx = next_idx
 
         return units
 
@@ -297,6 +353,9 @@ class PDFTranslator:
 
             # Detect vertical graphic lines as hard barriers (e.g. SAT divider at x=162.3)
             vertical_lines = self._get_vertical_divider_lines(page)
+
+            # Flatten signature widgets: snapshot logo at 300 DPI, delete widget /AP, re-insert logo
+            self._flatten_signature_widgets(page)
 
             # 1. Redact ONLY translatable text bounding boxes, stopping clean before untranslated values
             for u in translatable_units:
